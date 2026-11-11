@@ -1,0 +1,62 @@
+name: release
+
+# Publishes the chart when a tag v<version> is pushed, <version> being the
+# chart's version in charts/xolo/Chart.yaml: to the OCI registry
+# ghcr.io/<owner>/charts, and as an archive attached to a GitHub release.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Check the tag against the chart version
+        id: chart
+        run: |
+          version=$(sed -n 's/^version: *//p' charts/xolo/Chart.yaml | tr -d '"')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the chart version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Lint
+        run: helm lint charts/xolo --set database.dsn=postgres://xolo@db/xolo
+
+      - name: Package
+        run: helm package charts/xolo --destination dist
+
+      - name: Push to the OCI registry
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+          helm push "dist/xolo-${{ steps.chart.outputs.version }}.tgz" "oci://ghcr.io/${OWNER,,}/charts"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          app=$(sed -n 's/^appVersion: *//p' charts/xolo/Chart.yaml | tr -d '"')
+          cat > notes.md <<EOF
+          Xolo Helm chart ${{ steps.chart.outputs.version }}, deploying Xolo ${app} by default.
+
+          \`\`\`bash
+          helm install xolo oci://ghcr.io/${OWNER,,}/charts/xolo --version ${{ steps.chart.outputs.version }}
+          \`\`\`
+          EOF
+          gh release create "$GITHUB_REF_NAME" "dist/xolo-${{ steps.chart.outputs.version }}.tgz" \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md

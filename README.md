@@ -11,7 +11,7 @@ gateway, and the Kubernetes bench that tests it.
 | [`bench`](bench/README.md) | a local kind cluster with a fake LLM provider, functional checks of a release, load campaigns |
 
 ```bash
-helm install xolo ./charts/xolo \
+helm install xolo oci://ghcr.io/xolo-gateway/charts/xolo \
   --set baseURL=https://xolo.example.com \
   --set database.existingSecret=xolo-db
 ```

@@ -34,7 +34,9 @@ of `bench/campaign.sh` after a change that can affect performance.
 - Every value is documented in `values.yaml`; user-facing behaviour is
   documented in `charts/xolo/README.md`.
 - A change of the chart bumps `version` in `Chart.yaml`; following a Xolo
-  release bumps `appVersion`.
+  release bumps `appVersion`. Pushing the tag `v<version>` publishes the
+  chart to `oci://ghcr.io/xolo-gateway/charts` and creates the GitHub
+  release.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/):
   `feat(scope): subject`, `fix: subject`, etc.
 

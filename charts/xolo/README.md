@@ -24,12 +24,17 @@ share nothing but the database, so you scale out with `replicaCount` or
 kubectl create secret generic xolo-db \
   --from-literal=dsn='postgres://xolo:secret@postgres:5432/xolo?sslmode=require'
 
-helm install xolo ./charts/xolo \
+helm install xolo oci://ghcr.io/xolo-gateway/charts/xolo \
   --set baseURL=https://xolo.example.com \
   --set database.existingSecret=xolo-db \
   --set config.XOLO_HTTP_AUTHN_DEFAULT_ADMINS=admin@example.com \
   --set ingress.enabled=true --set 'ingress.hosts[0].host=xolo.example.com'
 ```
+
+The chart is published to the OCI registry `ghcr.io/xolo-gateway/charts`. Add
+`--version` to pin a release; each one is listed on the
+[releases page](https://github.com/xolo-gateway/xolo-chart/releases). From a
+checkout of this repository, `./charts/xolo` works as well.
 
 On the first install, the chart generates `XOLO_SECRET_KEY`, which encrypts
 the providers' API keys in the database, and `XOLO_HTTP_SESSION_KEYS`, which
