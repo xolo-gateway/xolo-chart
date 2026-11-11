@@ -72,5 +72,8 @@ BEGIN
 END $$;
 
 COMMIT;
-ANALYZE usage_records;
-ANALYZE plan_usage_hourly;
+-- The updates above leave a dead copy of every chaos record: vacuum them now,
+-- or autovacuum does it during the next measure and its CPU counts as the
+-- database's.
+VACUUM ANALYZE usage_records;
+VACUUM ANALYZE plan_usage_hourly;

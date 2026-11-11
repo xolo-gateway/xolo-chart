@@ -8,6 +8,9 @@ FROM golang:1.27-alpine AS build
 RUN apk add --no-cache git
 WORKDIR /src
 COPY . .
+# The copied checkout belongs to the host user, which recent git refuses to
+# read as root ("dubious ownership"): build without the VCS stamp.
+ENV GOFLAGS=-buildvcs=false
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o /out/xolo-server ./cmd/server && \
