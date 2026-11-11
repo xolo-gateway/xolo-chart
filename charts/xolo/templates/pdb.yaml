@@ -1,0 +1,16 @@
+{{- if and .Values.podDisruptionBudget.enabled (not .Values.persistence.enabled) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "xolo.fullname" . }}
+  labels:
+    {{- include "xolo.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  # A replica that is not ready serves nothing: evicting it costs nothing,
+  # and refusing to would block node drains during an incident.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      {{- include "xolo.selectorLabels" . | nindent 6 }}
+{{- end }}

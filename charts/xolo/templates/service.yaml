@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "xolo.fullname" . }}
+  labels:
+    {{- include "xolo.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "xolo.selectorLabels" . | nindent 4 }}
+{{- if .Values.provisionningAPI.enabled }}
+---
+# Separate from the public Service so no ingress or route can pick it up by
+# mistake: the provisionning API is for machine clients holding a certificate.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "xolo.fullname" . }}-provisionning
+  labels:
+    {{- include "xolo.labels" . | nindent 4 }}
+  {{- with .Values.provisionningAPI.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.provisionningAPI.service.type }}
+  ports:
+    - name: provisionning
+      port: {{ .Values.provisionningAPI.port }}
+      targetPort: provisionning
+      protocol: TCP
+  selector:
+    {{- include "xolo.selectorLabels" . | nindent 4 }}
+{{- end }}

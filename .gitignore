@@ -1,0 +1,9 @@
+# Raw bench output and the analysis drawn from it stay local.
+/bench/results/
+/bench/REPORT.md
+# Crash dumps, packaged charts, editor files.
+core
+core.*
+*.tgz
+.idea/
+.vscode/

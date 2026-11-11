@@ -1,0 +1,66 @@
+# Disposable PostgreSQL for the benchmark. Durability is traded for throughput
+# (fsync, synchronous_commit and full_page_writes off) so the database is not
+# what the campaign measures; never use these settings for real data.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: bench
+spec:
+  selector: {app: postgres}
+  ports:
+    - {name: pg, port: 5432, targetPort: 5432}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: bench
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      nodeSelector:
+        bench/role: infra
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          args:
+            - -c
+            - fsync=off
+            - -c
+            - synchronous_commit=off
+            - -c
+            - full_page_writes=off
+            - -c
+            - max_connections=300
+            - -c
+            - shared_buffers=256MB
+          env:
+            - {name: POSTGRES_USER, value: xolo}
+            - {name: POSTGRES_PASSWORD, value: xolo}
+            - {name: POSTGRES_DB, value: xolo}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "xolo", "-d", "xolo"]
+            periodSeconds: 3
+          resources:
+            requests: {cpu: "2", memory: 1Gi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 5Gi

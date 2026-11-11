@@ -1,0 +1,233 @@
+{{- $fullname := include "xolo.fullname" . }}
+{{- $shutdown := .Values.shutdownTimeout }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "xolo.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  {{- if .Values.persistence.enabled }}
+  # A ReadWriteOnce volume cannot be mounted by the old and the new pod at once.
+  strategy:
+    type: Recreate
+  {{- else }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 0
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "xolo.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "xolo.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "xolo.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # Shutdown timeout, pre-stop pause and a margin for the plugins to stop.
+      terminationGracePeriodSeconds: {{ add (int (trimSuffix "s" $shutdown)) .Values.preStopDelaySeconds 10 }}
+      {{- with .Values.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: xolo
+          image: "{{ .Values.image.repository }}:{{ include "xolo.imageTag" . }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 3002
+              protocol: TCP
+            {{- if .Values.provisionningAPI.enabled }}
+            - name: provisionning
+              containerPort: {{ .Values.provisionningAPI.port }}
+              protocol: TCP
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ $fullname }}
+            - secretRef:
+                name: {{ include "xolo.secretName" . }}
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: XOLO_HTTP_ADDRESS
+              value: ":3002"
+            - name: XOLO_HTTP_BASE_URL
+              value: {{ .Values.baseURL | quote }}
+            - name: XOLO_HTTP_SHUTDOWN_TIMEOUT
+              value: {{ $shutdown | quote }}
+            {{- if .Values.persistence.enabled }}
+            - name: XOLO_STORAGE_DATABASE_DSN
+              value: /data/data.sqlite
+            {{- else }}
+            - name: XOLO_STORAGE_DATABASE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "xolo.databaseSecretName" . }}
+                  key: {{ include "xolo.databaseSecretKey" . }}
+            {{- end }}
+            - name: XOLO_STORAGE_DATABASE_POOL_MAX_OPEN_CONNS
+              value: {{ .Values.database.pool.maxOpenConns | quote }}
+            - name: XOLO_STORAGE_DATABASE_POOL_MAX_IDLE_CONNS
+              value: {{ .Values.database.pool.maxIdleConns | quote }}
+            - name: XOLO_STORAGE_DATABASE_POOL_CONN_MAX_LIFETIME
+              value: {{ .Values.database.pool.connMaxLifetime | quote }}
+            - name: XOLO_PLUGINS_DIR
+              value: {{ .Values.plugins.dir | quote }}
+            # The read-only root filesystem leaves these two writable volumes:
+            # plugin caches resolve through os.UserCacheDir.
+            - name: XDG_CACHE_HOME
+              value: /var/cache/xolo
+            - name: HOME
+              value: /tmp
+            - name: TMPDIR
+              value: /tmp
+            {{- if .Values.provisionningAPI.enabled }}
+            - name: XOLO_PROVISIONNING_API_ENABLED
+              value: "true"
+            - name: XOLO_PROVISIONNING_API_ADDRESS
+              value: ":{{ .Values.provisionningAPI.port }}"
+            - name: XOLO_PROVISIONNING_API_TLS_CERT_FILE
+              value: /etc/xolo/provisionning/tls.crt
+            - name: XOLO_PROVISIONNING_API_TLS_KEY_FILE
+              value: /etc/xolo/provisionning/tls.key
+            - name: XOLO_PROVISIONNING_API_TLS_CLIENT_CA_FILE
+              value: /etc/xolo/provisionning/{{ .Values.provisionningAPI.clientCAKey }}
+            - name: XOLO_PROVISIONNING_API_AUTHORIZED_URIS
+              value: {{ join "," .Values.provisionningAPI.authorizedURIs | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          {{- if gt (int .Values.preStopDelaySeconds) 0 }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "{{ .Values.preStopDelaySeconds }}"]
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /var/cache/xolo
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: /data
+            {{- end }}
+            {{- if .Values.provisionningAPI.enabled }}
+            - name: provisionning-tls
+              mountPath: /etc/xolo/provisionning
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          {{- if .Values.plugins.cache.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.plugins.cache.existingClaim }}
+          {{- else }}
+          emptyDir:
+            {{- with .Values.plugins.cache.sizeLimit }}
+            sizeLimit: {{ . }}
+            {{- end }}
+          {{- end }}
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}
+        {{- end }}
+        {{- if .Values.provisionningAPI.enabled }}
+        - name: provisionning-tls
+          secret:
+            secretName: {{ .Values.provisionningAPI.tlsSecret }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- if .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml .Values.topologySpreadConstraints | nindent 8 }}
+      {{- else if .Values.spreadAcrossNodes }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "xolo.selectorLabels" . | nindent 14 }}
+          matchLabelKeys: [pod-template-hash]
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "xolo.selectorLabels" . | nindent 14 }}
+          matchLabelKeys: [pod-template-hash]
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

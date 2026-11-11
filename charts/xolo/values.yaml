@@ -1,0 +1,251 @@
+# Default values for the Xolo chart.
+#
+# Xolo is stateless once its database is external: every replica serves the
+# web UI, the OpenAI-compatible proxy (/api/v1) and, when enabled, the
+# provisionning API and the webhook worker. Replicas coordinate through
+# PostgreSQL only, so scaling out is a matter of replicaCount (or autoscaling)
+# and of the database's connection budget.
+
+image:
+  repository: ghcr.io/xolo-gateway/xolo-server
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Ignored when autoscaling.enabled is true.
+replicaCount: 2
+
+# Public URL of the instance, used to build links, redirects and OIDC
+# callbacks (XOLO_HTTP_BASE_URL). Must match the ingress host.
+baseURL: "http://localhost:3002"
+
+database:
+  # PostgreSQL connection string (XOLO_STORAGE_DATABASE_DSN), e.g.
+  # postgres://xolo:secret@postgres:5432/xolo?sslmode=require
+  # Required unless existingSecret is set. Several replicas need PostgreSQL:
+  # SQLite is only accepted with persistence.enabled and a single replica.
+  dsn: ""
+  # Secret holding the DSN, instead of dsn.
+  existingSecret: ""
+  existingSecretKey: dsn
+  # Connections opened by EACH replica. Keep
+  # maxReplicas × maxOpenConns (+ migrations and maintenance) under the
+  # server's max_connections, or put a pooler (PgBouncer in transaction mode)
+  # in front of it.
+  #
+  # Keep maxIdleConns equal to maxOpenConns. With fewer idle connections, the
+  # pool closes the connections a burst returns and opens them again on the
+  # next burst, each with a TCP and authentication handshake, and a replica
+  # serves fewer requests.
+  pool:
+    maxOpenConns: 20
+    maxIdleConns: 20
+    connMaxLifetime: 30m
+
+# Secrets that must stay stable across releases and be identical on every
+# replica: XOLO_SECRET_KEY encrypts the providers' API keys in the database,
+# XOLO_HTTP_SESSION_KEYS signs the session cookies. Left empty, they are
+# generated once and kept by later upgrades (the existing Secret is looked
+# up). Losing XOLO_SECRET_KEY makes the stored provider keys unreadable:
+# back it up, or provide it through existingSecret.
+secrets:
+  # Secret with the keys XOLO_SECRET_KEY and XOLO_HTTP_SESSION_KEYS. When set,
+  # secretKey and sessionKeys are ignored and no Secret is created.
+  existingSecret: ""
+  # 32 bytes, hex encoded (openssl rand -hex 32).
+  secretKey: ""
+  # Comma separated; the first one signs, the others still verify (rotation).
+  sessionKeys: ""
+
+# Plain XOLO_* settings rendered into a ConfigMap, e.g.
+#   XOLO_HTTP_AUTHN_DEFAULT_ADMINS: admin@example.com
+#   XOLO_HTTP_AUTHN_PROVIDERS_OIDC_DISCOVERY_URL: https://sso.example.com/...
+#   XOLO_MULTITENANCY_ENABLED: "true"
+# Secrets (OIDC client secret, ...) belong in extraEnvFrom.
+config:
+  XOLO_HTTP_SESSION_COOKIE_SECURE: "true"
+  XOLO_LOGGER_LEVEL: "0"
+
+# Time given to in-flight requests once a replica is asked to stop. Streamed
+# completions routinely last tens of seconds: a short value cuts them on every
+# rollout or scale-down.
+shutdownTimeout: 60s
+# Pause before the shutdown starts, so the endpoint is removed from every
+# Service and ingress before the replica stops accepting connections.
+preStopDelaySeconds: 5
+
+extraEnv: []
+#  - name: XOLO_HTTP_AUTHN_PROVIDERS_OIDC_SECRET
+#    valueFrom:
+#      secretKeyRef: {name: xolo-oidc, key: secret}
+extraEnvFrom: []
+#  - secretRef:
+#      name: xolo-extra
+
+plugins:
+  # Directory scanned for plugin binaries: every executable in it is started.
+  # The image ships the official plugins in /plugins. To add your own, copy
+  # them from an init container into a volume and point dir to it.
+  dir: /plugins
+  # Cache of downloaded plugin data (pseudonymizer NER models, ...). An
+  # emptyDir by default: each new replica downloads again, which delays its
+  # first pseudonymized request. Set existingClaim to share a
+  # ReadWriteMany volume, or sizeLimit to bound the emptyDir.
+  cache:
+    existingClaim: ""
+    sizeLimit: 2Gi
+
+# SQLite on a volume, for a single replica evaluation install only.
+persistence:
+  enabled: false
+  storageClass: ""
+  accessModes: [ReadWriteOnce]
+  size: 1Gi
+
+service:
+  type: ClusterIP
+  port: 3002
+  annotations: {}
+
+# Streaming (SSE) needs the proxy not to buffer responses and to allow long
+# reads: with ingress-nginx, for instance,
+#   nginx.ingress.kubernetes.io/proxy-buffering: "off"
+#   nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+#   nginx.ingress.kubernetes.io/proxy-body-size: 64m
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: xolo.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: xolo-tls
+  #    hosts: [xolo.example.com]
+
+# Gateway API alternative to the ingress.
+httpRoute:
+  enabled: false
+  annotations: {}
+  parentRefs: []
+  #  - name: public
+  #    namespace: gateway
+  hostnames: []
+  # Applied to the route's single rule; streamed completions need a request
+  # timeout longer than the longest generation.
+  timeouts:
+    request: 600s
+
+# Machine-to-machine API on its own listener, authenticated by mutual TLS
+# only. Never expose it through the public ingress.
+provisionningAPI:
+  enabled: false
+  port: 3003
+  # kubernetes.io/tls Secret with tls.crt and tls.key, plus the CA that signs
+  # the client certificates under clientCAKey.
+  tlsSecret: ""
+  clientCAKey: ca.crt
+  # Required: a client is authorized when its certificate carries exactly one
+  # URI SAN, equal to one of these (e.g. urn:xolo:client:control-plane).
+  authorizedURIs: []
+  service:
+    type: ClusterIP
+    annotations: {}
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  # Xolo is CPU bound under load (proxying, token accounting, plugins); a
+  # streamed request holds little CPU but a long-lived connection, so CPU is
+  # the signal that follows the work.
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: ""
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 384Mi
+  limits:
+    # No CPU limit by default: throttling adds latency to every stream, and
+    # the request already reserves the capacity the HPA works from.
+    memory: 1Gi
+
+# Soft spreading over nodes and zones. Replaced, not merged, when set.
+topologySpreadConstraints: []
+spreadAcrossNodes: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+
+podAnnotations: {}
+podLabels: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+probes:
+  startup:
+    # Covers the schema migrations run at startup: one replica migrates under
+    # an advisory lock while the others wait for it.
+    periodSeconds: 5
+    failureThreshold: 60
+  liveness:
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  readiness:
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 2
+
+metrics:
+  # Prometheus Operator ServiceMonitor. /metrics requires a platform admin's
+  # API token: store it in a Secret and reference it here.
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+    tokenSecret:
+      name: ""
+      key: token
+
+extraVolumes: []
+extraVolumeMounts: []
+initContainers: []

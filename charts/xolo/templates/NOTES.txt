@@ -1,0 +1,16 @@
+Xolo {{ include "xolo.imageTag" . }} is deployed as {{ include "xolo.fullname" . }}
+{{- if .Values.autoscaling.enabled }} ({{ .Values.autoscaling.minReplicas }}–{{ .Values.autoscaling.maxReplicas }} replicas){{ else }} ({{ .Values.replicaCount }} replica(s)){{ end }}.
+
+Public URL: {{ .Values.baseURL }}
+OpenAI-compatible API: {{ trimSuffix "/" .Values.baseURL }}/api/v1
+
+Without an ingress:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "xolo.fullname" . }} 3002:{{ .Values.service.port }}
+
+{{- if not .Values.secrets.existingSecret }}
+
+XOLO_SECRET_KEY encrypts the providers' API keys stored in the database. It
+was {{ if .Values.secrets.secretKey }}provided{{ else }}generated{{ end }} into the Secret {{ include "xolo.fullname" . }},
+which the chart keeps on uninstall. Back it up now:
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "xolo.fullname" . }} -o jsonpath='{.data.XOLO_SECRET_KEY}' | base64 -d
+{{- end }}

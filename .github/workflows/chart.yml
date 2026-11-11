@@ -1,0 +1,39 @@
+name: chart
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Lint
+        run: helm lint charts/xolo --set database.dsn=postgres://xolo@db/xolo
+
+      # The configurations the chart must render, and those it must refuse.
+      - name: Render
+        run: |
+          set -e
+          t() { helm template xolo charts/xolo "$@" > /dev/null; }
+          t --set database.dsn=postgres://xolo@db/xolo
+          t --set database.existingSecret=xolo-db --set replicaCount=3 \
+            --set autoscaling.enabled=true --set ingress.enabled=true \
+            --set 'ingress.hosts[0].host=xolo.example.com' --set podDisruptionBudget.enabled=true
+          t --set database.dsn=/data/xolo.sqlite --set persistence.enabled=true --set replicaCount=1
+          refuse() { if helm template xolo charts/xolo "$@" > /dev/null 2>&1; then echo "rendered: $*"; exit 1; fi; }
+          refuse
+          refuse --set database.dsn=/data/xolo.sqlite
+          refuse --set database.dsn=/data/xolo.sqlite --set persistence.enabled=true --set replicaCount=2
+          refuse --set database.dsn=postgres://xolo@db/xolo --set provisionningAPI.enabled=true

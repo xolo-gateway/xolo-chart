@@ -1,0 +1,40 @@
+# Benchmark values: the dev image built from ../xolo, the bench PostgreSQL and
+# the fixture's encryption key (cmd/seed encrypts the provider keys with it).
+# That key is public: never use it, or these values, outside the bench.
+image:
+  repository: xolo-server
+  tag: dev
+  pullPolicy: Never
+
+replicaCount: 2
+baseURL: http://xolo.bench:3002
+
+database:
+  dsn: postgres://xolo:xolo@postgres.bench:5432/xolo?sslmode=disable
+  pool:
+    maxOpenConns: 40
+    maxIdleConns: 40
+
+secrets:
+  secretKey: 0e2ec2e6d5aa74c1b96c65d1b4a0f4d9ad48c6b1f3ff7a1c5f0f5f2ae4c1d3b7
+  sessionKeys: bench-session-key-000000000000001
+
+config:
+  XOLO_HTTP_SESSION_COOKIE_SECURE: "false"
+  # Warnings and errors only: request logs would cost CPU the campaign measures.
+  XOLO_LOGGER_LEVEL: "4"
+
+# A CPU limit equal to the request on purpose, unlike the chart default: each
+# replica gets exactly half a core, so its capacity does not depend on the
+# load of the other replicas, and adding replicas adds capacity instead of
+# sharing the same host cores.
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 500m
+    memory: 1Gi
+
+nodeSelector:
+  bench/role: app

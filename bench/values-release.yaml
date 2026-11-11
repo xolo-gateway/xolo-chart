@@ -1,0 +1,14 @@
+# The published image at the chart's appVersion, instead of the dev build,
+# with the provisionning API: validates the chart as released.
+image:
+  repository: ghcr.io/xolo-gateway/xolo-server
+  tag: ""
+  pullPolicy: IfNotPresent
+provisionningAPI:
+  enabled: true
+  tlsSecret: xolo-provisionning-tls
+  authorizedURIs: [urn:xolo:client:bench]
+config:
+  XOLO_HTTP_SESSION_COOKIE_SECURE: "false"
+  XOLO_LOGGER_LEVEL: "4"
+  XOLO_HTTP_RATE_LIMIT_TRUSTED_PROXIES: "10.244.0.0/16"

@@ -1,0 +1,40 @@
+# OpenAI-compatible provider with injectable faults, from xolo-chaos
+# (https://github.com/xolo-gateway/xolo-chaos).
+apiVersion: v1
+kind: Service
+metadata:
+  name: chaos-provider
+  namespace: bench
+spec:
+  selector: {app: chaos-provider}
+  ports:
+    - {name: http, port: 9090, targetPort: 9090}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chaos-provider
+  namespace: bench
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: chaos-provider}
+  template:
+    metadata:
+      labels: {app: chaos-provider}
+    spec:
+      nodeSelector:
+        bench/role: infra
+      containers:
+        - name: provider
+          image: xolo-chaos/provider:dev
+          imagePullPolicy: Never
+          env:
+            - {name: CHAOS_ADDR, value: ":9090"}
+            - {name: CHAOS_SEED, value: "20260914"}
+          ports:
+            - containerPort: 9090
+          readinessProbe:
+            httpGet: {path: /healthz, port: 9090}
+          resources:
+            requests: {cpu: "1", memory: 128Mi}

@@ -1,0 +1,11 @@
+# Local cluster for the chart's smoke test and benchmark: one control plane and
+# three workers, so replicas actually spread over several nodes and a
+# PodDisruptionBudget or topology spread constraint has something to act on.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: xolo
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+  - role: worker
