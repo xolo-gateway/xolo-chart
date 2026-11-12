@@ -81,6 +81,20 @@ requests, then gives the requests in flight 60 seconds to finish
 (`shutdownTimeout`). A rollout or a scale-down does not cut streamed
 completions shorter than that.
 
+**Upgrades with a stopped-server migration.** Some Xolo releases carry a
+migration that requires every server to be stopped, and their release notes
+say so (0.95.0 and 0.96.0 do). A rolling update keeps old replicas writing
+while the new one migrates. Stop them first, then upgrade:
+
+```sh
+kubectl -n <namespace> scale deploy/<release> --replicas=0
+helm upgrade <release> oci://ghcr.io/xolo-gateway/charts/xolo --version <chart version> -n <namespace> --reuse-values
+```
+
+`helm upgrade` sets the replica count back. With `autoscaling.enabled` it
+does not, and the HorizontalPodAutoscaler leaves a Deployment at zero: scale
+it back to `autoscaling.minReplicas` with `kubectl scale` after the upgrade.
+
 **Disruptions.** A PodDisruptionBudget allows one replica down at a time.
 The replicas spread over nodes and zones when the scheduler can.
 
@@ -139,17 +153,18 @@ and reopens connections on every burst, and a replica serves less.
 
 The figures below come from the [bench](../../bench/README.md) of this
 repository, on a kind cluster with a fake provider and short completions,
-with Xolo 0.95.3. They give orders of magnitude. Measure your own traffic
-before you size a production deployment.
+with Xolo 0.95.3 without a plan and Xolo 0.97.0 with one. They give orders
+of magnitude. Measure your own traffic before you size a production
+deployment.
 
 Requests per second one replica serves:
 
 | Replica | Without a plan | With a subscription plan |
 |---|---|---|
-| 0.5 vCPU | 140 | 60 |
-| 1 vCPU | 300 | 140 |
-| 2 vCPU | 500 | 200 |
-| 4 vCPU | 600 | 240 |
+| 0.5 vCPU | 140 | 100 |
+| 1 vCPU | 300 | 180 |
+| 2 vCPU | 500 | 300 |
+| 4 vCPU | 600 | 400 |
 
 Without a plan, a request costs Xolo 3.5 to 4 ms of CPU. A prompt guard
 brings it to about 5.5 ms, and pseudonymization to about 8 ms. A replica
@@ -164,9 +179,9 @@ highest rate measured, with a p95 time to first token of 110 ms. Traffic
 spread over several organizations goes further.
 
 With a subscription plan, every request also reads the plan's usage. The
-figures above come from a plan with three windows and two API keys.
-PostgreSQL then uses about 20 ms of CPU per request and becomes the limit, so
-size it for that load.
+figures above come from a plan with three windows and two API keys. Xolo
+then uses 5 to 6.5 ms of CPU per request and PostgreSQL 7 to 10 ms:
+PostgreSQL becomes the limit, so size it for that load.
 
 Do not set a CPU limit. A throttled replica holds its database locks longer,
 which lowers the ceiling of every organization it serves.
